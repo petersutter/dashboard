@@ -77,5 +77,7 @@ jobs:
       - name: Push prepare branch
         run: git push origin "$PREPARE_BRANCH"
       - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr create --base "$HOTFIX_BRANCH" --head "$PREPARE_BRANCH" --title "[$HOTFIX_BRANCH] Prepare hotfix branch" --body "Bumps the patch version and adds the hotfix branch references to .yarnrc.yml for release preparation."
         
