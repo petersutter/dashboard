@@ -47,6 +47,12 @@ jobs:
         run: |
           git checkout -b "$HOTFIX_BRANCH"
           git push origin "$HOTFIX_BRANCH"
+      - name: Check if prepare branch exists
+        run: |
+          if git ls-remote --exit-code origin "$PREPARE_BRANCH" > /dev/null 2>&1; then
+            echo "Prepare branch $PREPARE_BRANCH already exists"
+            exit 1
+          fi
       - name: Create prepare branch
         run: git checkout -b "$PREPARE_BRANCH"
       - name: Bump patch version
@@ -72,3 +78,4 @@ jobs:
         run: git push origin "$PREPARE_BRANCH"
       - name: Create Pull Request
         run: gh pr create --base "$HOTFIX_BRANCH" --head "$PREPARE_BRANCH" --title "[$HOTFIX_BRANCH] Prepare hotfix branch" --body "Bumps the patch version and adds the hotfix branch references to .yarnrc.yml for release preparation."
+        
