@@ -59,21 +59,10 @@ jobs:
         uses: gardener/cc-utils/.github/actions/version@master
         with:
           version-operation: bump-patch
+          prerelease: dev
+          callback-action-path: .github/actions/hotfix-yarnrc-callback
           repository-operation: commit-to-head
-          commit-message: Bump patch version to ${version} for hotfix
-      - name: Update .yarnrc.yml
-        run: |
-          cat <<EOF >> .yarnrc.yml
-          changesetBaseRefs:
-            - "master"
-            - "origin/master"
-            - "$HOTFIX_BRANCH"
-            - "origin/$HOTFIX_BRANCH"
-          EOF
-      - name: Commit changes
-        run: |
-          git add .yarnrc.yml
-          git commit -m "Add hotfix branch to changesetBaseRefs in .yarnrc.yml"
+          commit-message: Bump patch version to ${version} for hotfix and update .yarnrc.yml
       - name: Push prepare branch
         run: git push origin "$PREPARE_BRANCH"
       - name: Create Pull Request
