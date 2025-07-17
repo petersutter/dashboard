@@ -43,16 +43,16 @@ jobs:
             echo "Hotfix branch $HOTFIX_BRANCH already exists"
             exit 1
           fi
-      - name: Create and push hotfix branch
-        run: |
-          git checkout -b "$HOTFIX_BRANCH"
-          git push origin "$HOTFIX_BRANCH"
       - name: Check if prepare branch exists
         run: |
           if git ls-remote --exit-code origin "$PREPARE_BRANCH" > /dev/null 2>&1; then
             echo "Prepare branch $PREPARE_BRANCH already exists"
             exit 1
           fi
+      - name: Create and push hotfix branch
+        run: |
+          git checkout -b "$HOTFIX_BRANCH"
+          git push origin "$HOTFIX_BRANCH"
       - name: Create prepare branch
         run: git checkout -b "$PREPARE_BRANCH"
       - name: Bump patch version
