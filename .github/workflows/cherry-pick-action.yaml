@@ -28,6 +28,8 @@ jobs:
           BODY="${{ github.event.comment.body }}"
           BRANCH=$(echo "$BODY" | awk '/^\/cherry-pick /{print $2}')
           echo "target_branch=$BRANCH" >> $GITHUB_OUTPUT
+      - name: Setup Git Identity
+        uses: gardener/cc-utils/.github/actions/setup-git-identity@master
       - name: Perform cherry-pick
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
