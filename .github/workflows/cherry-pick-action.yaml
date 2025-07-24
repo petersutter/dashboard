@@ -1,0 +1,142 @@
+name: Cherry Pick Action
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/cherry-pick ') &&
+      (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: Parse branch
+        id: parse
+        run: |
+          BODY="${{ github.event.comment.body }}"
+          BRANCH=$(echo "$BODY" | awk '/^\/cherry-pick /{print $2}')
+          echo "target_branch=$BRANCH" >> $GITHUB_OUTPUT
+      - name: Perform cherry-pick
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          #!/usr/bin/env bash
+          
+          set -o errexit
+          set -o nounset
+          set -o pipefail
+          
+          REPO_ROOT="$(pwd)"
+          declare -r REPO_ROOT
+          REBASEMAGIC="${REPO_ROOT}/.git/rebase-apply"
+          PR_NUMBER="${{ github.event.issue.number }}"
+          TARGET_BRANCH="${{ steps.parse.outputs.target_branch }}"
+          UPSTREAM_REMOTE="origin"
+          FORK_REMOTE="origin"
+          MAIN_REPO_ORG="${{ github.repository_owner }}"
+          MAIN_REPO_NAME="${{ github.event.repository.name }}"
+          BRANCH="${UPSTREAM_REMOTE}/${TARGET_BRANCH}"
+          PULLS=("${PR_NUMBER}")
+          DEPRECATED_RELEASE_NOTE_CATEGORY="|noteworthy|improvement|action"
+          RELEASE_NOTE_CATEGORY="(breaking|feature|bugfix|doc|other${DEPRECATED_RELEASE_NOTE_CATEGORY})"
+          RELEASE_NOTE_TARGET_GROUP="(user|operator|developer|dependency)"
+          
+          function join { local IFS="$1"; shift; echo "$*"; }
+          PULLDASH=$(join - "${PULLS[@]/#/#}")
+          PULLSUBJ=$(join " " "${PULLS[@]/#/#}")
+          
+          NEWBRANCHREQ="automated-cherry-pick-of-${PULLDASH}"
+          NEWBRANCH="${NEWBRANCHREQ}-${TARGET_BRANCH}"
+          NEWBRANCHUNIQ="${NEWBRANCH}-$(date +%s)"
+          
+          echo "+++ Updating remotes..."
+          git remote update "${UPSTREAM_REMOTE}" "${FORK_REMOTE}"
+          
+          if ! git log -n1 --format=%H "${BRANCH}" >/dev/null 2>&1; then
+            echo "!!! '${BRANCH}' not found."
+            gh issue comment "${PR_NUMBER}" --body "Target branch ${TARGET_BRANCH} does not exist."
+            exit 1
+          fi
+          
+          echo "+++ Creating local branch ${NEWBRANCHUNIQ}"
+          git checkout -b "${NEWBRANCHUNIQ}" "${BRANCH}"
+          
+          SUBJECTS=()
+          RELEASE_NOTES=()
+          LABEL_LIST=()
+          
+          for pull in "${PULLS[@]}"; do
+            echo "+++ Downloading patch for PR ${pull}"
+            curl -o "/tmp/${pull}.patch" -sSL "https://github.com/${MAIN_REPO_ORG}/${MAIN_REPO_NAME}/pull/${pull}.patch"
+            
+            echo "+++ Attempting cherry-pick"
+            git am -3 "/tmp/${pull}.patch" || {
+              if [[ -e "${REBASEMAGIC}" ]]; then
+                echo "+++ Conflicts detected, aborting"
+                git am --abort >/dev/null 2>&1 || true
+                rm -f "/tmp/${pull}.patch"
+                gh issue comment "${PR_NUMBER}" --body "Cherry-pick to ${TARGET_BRANCH} failed due to conflicts. Please cherry-pick manually."
+                exit 1
+              else
+                echo "!!! git am failed for unknown reason"
+                rm -f "/tmp/${pull}.patch"
+                gh issue comment "${PR_NUMBER}" --body "Cherry-pick to ${TARGET_BRANCH} failed unexpectedly."
+                exit 1
+              fi
+            }
+            
+            pr_info=$(gh api "repos/${MAIN_REPO_ORG}/${MAIN_REPO_NAME}/pulls/${pull}")
+            subject=$(echo "${pr_info}" | jq -r '.title')
+            SUBJECTS+=("#${pull}: ${subject}")
+            
+            temp_labels=$(echo "${pr_info}" | jq -r '.labels[].name' | grep -P '^(area|kind)')
+            for l in ${temp_labels}; do
+              LABEL_LIST+=("${l}")
+            done
+            
+            rm -f "/tmp/${pull}.patch"
+            
+            body=$(echo "${pr_info}" | jq -r '.body')
+            notes=$(echo "${body}" | grep -Po "\`\`\` *${RELEASE_NOTE_CATEGORY} ${RELEASE_NOTE_TARGET_GROUP}.*?\`\`\`" || true)
+            RELEASE_NOTES+=("${notes}")
+          done
+          
+          git push "${FORK_REMOTE}" "${NEWBRANCHUNIQ}:${NEWBRANCH}"
+          
+          rel="${TARGET_BRANCH}"
+          numandtitle=$(printf '%s\n' "${SUBJECTS[@]}")
+          relnotes=$(printf '%s\n' "${RELEASE_NOTES[@]}")
+          unique_labels=$(printf '%s\n' "${LABEL_LIST[@]}" | sort -u)
+          label_flags=""
+          while IFS= read -r label; do
+            if [[ -n "${label}" ]]; then
+              label_flags+=" --label ${label}"
+            fi
+          done <<< "${unique_labels}"
+          
+          pr_body="[${rel}] Automated cherry pick of ${numandtitle}
+          
+          Cherry pick of ${PULLSUBJ} on ${rel}.
+          
+          ${numandtitle}
+          
+          **Release Notes:**
+          ${relnotes}"
+          
+          pr_title="[${rel}] Automated cherry pick of ${PULLSUBJ}"
+          
+          PR_URL=$(gh pr create --title "${pr_title}" --body "${pr_body}" --base "${rel}" --head "${NEWBRANCH}" ${label_flags})
+          
+          gh issue comment "${PR_NUMBER}" --body "Cherry-pick PR created for ${TARGET_BRANCH}: ${PR_URL}"
