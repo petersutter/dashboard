@@ -63,21 +63,18 @@ jobs:
           NEWBRANCH="${NEWBRANCHREQ}-${TARGET_BRANCH}"
           NEWBRANCHUNIQ="${NEWBRANCH}-$(date +%s)"
           
+          echo "+++ Starting cherry-pick for PR ${PR_NUMBER} to branch ${TARGET_BRANCH}"
           echo "+++ Updating remotes..."
           git remote update "${UPSTREAM_REMOTE}" "${FORK_REMOTE}"
           
-          echo "+++ DEBUG: Checking if branch ${BRANCH} exists"
           if ! git log -n1 --format=%H "${BRANCH}" >/dev/null 2>&1; then
             echo "!!! '${BRANCH}' not found."
             gh issue comment "${PR_NUMBER}" --body "Target branch ${TARGET_BRANCH} does not exist."
             exit 1
-          else
-            echo "+++ DEBUG: Branch ${BRANCH} found, commit hash: $(git log -n1 --format=%H "${BRANCH}")"
           fi
           
           echo "+++ Creating local branch ${NEWBRANCHUNIQ}"
           git checkout -b "${NEWBRANCHUNIQ}" "${BRANCH}"
-          echo "+++ DEBUG: Current branch: $(git rev-parse --abbrev-ref HEAD)"
           
           SUBJECTS=()
           RELEASE_NOTES=()
@@ -86,75 +83,62 @@ jobs:
           for pull in "${PULLS[@]}"; do
             echo "+++ Downloading patch for PR ${pull}"
             curl -o "/tmp/${pull}.patch" -sSL "https://github.com/${MAIN_REPO_ORG}/${MAIN_REPO_NAME}/pull/${pull}.patch"
-            echo "+++ DEBUG: Patch file downloaded to /tmp/${pull}.patch"
-            echo "+++ DEBUG: Patch file contents:"
-            cat "/tmp/${pull}.patch" || echo "+++ DEBUG: Failed to display patch file contents"
-            echo "+++ DEBUG: Patch file size: $(wc -c < "/tmp/${pull}.patch") bytes"
             
-            echo "+++ Attempting cherry-pick"
-            echo "+++ DEBUG: Running git am -3 /tmp/${pull}.patch"
-            echo "+++ DEBUG: Git status before cherry-pick:"
-            git status
-            echo "+++ DEBUG: Git branch before cherry-pick:"
-            git branch --show-current
-            echo "+++ DEBUG: Last commit before cherry-pick:"
-            git log -1 --pretty=%H
-            if ! git am -3 "/tmp/${pull}.patch"; then
-              echo "+++ DEBUG: git am failed"
+            echo "+++ Attempting cherry-pick for PR ${pull}"
+            git am -3 "/tmp/${pull}.patch" || {
               if [[ -e "${REBASEMAGIC}" ]]; then
-                echo "+++ Conflicts detected, aborting"
-                echo "+++ DEBUG: Contents of rebase-apply directory:"
-                ls -l "${REBASEMAGIC}" || echo "+++ DEBUG: Failed to list rebase-apply directory"
+                echo "+++ Conflicts detected, aborting cherry-pick"
                 git am --abort >/dev/null 2>&1 || true
                 rm -f "/tmp/${pull}.patch"
                 gh issue comment "${PR_NUMBER}" --body "Cherry-pick to ${TARGET_BRANCH} failed due to conflicts. Please cherry-pick manually."
                 exit 1
               else
                 echo "!!! git am failed for unknown reason"
-                echo "+++ DEBUG: Git status after failed cherry-pick:"
-                git status
                 rm -f "/tmp/${pull}.patch"
                 gh issue comment "${PR_NUMBER}" --body "Cherry-pick to ${TARGET_BRANCH} failed unexpectedly."
                 exit 1
               fi
-            fi
-            echo "+++ DEBUG: Cherry-pick applied successfully"
+            }
+            echo "+++ Cherry-pick applied successfully for PR ${pull}"
             
+            echo "+++ Fetching PR info for ${pull}"
             pr_info=$(gh api "repos/${MAIN_REPO_ORG}/${MAIN_REPO_NAME}/pulls/${pull}")
-
-            echo "+++ DEBUG: pr_info: ${pr_info}"
+            
             subject=$(echo "${pr_info}" | jq -r '.title')
-            echo "+++ DEBUG: subject: ${subject}"
+            echo "+++ Collected subject: #${pull}: ${subject}"
             SUBJECTS+=("#${pull}: ${subject}")
-            echo "+++ DEBUG: SUBJECTS: ${SUBJECTS}"
-            temp_labels=$(echo "${pr_info}" | jq -r '.labels[].name' | grep -P '^(area|kind)')
-            echo "+++ DEBUG: temp_labels: ${temp_labels}"
-            for l in ${temp_labels}; do
-              LABEL_LIST+=("${l}")
-            done
-            echo "+++ DEBUG: LABEL_LIST: ${LABEL_LIST}"
+            
+            temp_labels=$(echo "${pr_info}" | jq -r '.labels[].name | select(test("^(area|kind)"))')
+            echo "+++ Filtered labels for PR ${pull}: ${temp_labels}"
+            while IFS= read -r l; do
+              if [[ -n "${l}" ]]; then
+                LABEL_LIST+=("${l}")
+              fi
+            done <<< "${temp_labels}"
             
             rm -f "/tmp/${pull}.patch"
-            echo "+++ DEBUG: Patch file /tmp/${pull}.patch removed"
             
             body=$(echo "${pr_info}" | jq -r '.body')
             notes=$(echo "${body}" | grep -Po "\`\`\` *${RELEASE_NOTE_CATEGORY} ${RELEASE_NOTE_TARGET_GROUP}.*?\`\`\`" || true)
+            echo "+++ Collected release notes for PR ${pull}: ${notes}"
             RELEASE_NOTES+=("${notes}")
           done
           
-          echo "+++ DEBUG: Pushing branch ${NEWBRANCHUNIQ} to ${FORK_REMOTE}:${NEWBRANCH}"
+          echo "+++ Pushing new branch ${NEWBRANCHUNIQ} to ${FORK_REMOTE}:${NEWBRANCH}"
           git push "${FORK_REMOTE}" "${NEWBRANCHUNIQ}:${NEWBRANCH}"
           
           rel="${TARGET_BRANCH}"
           numandtitle=$(printf '%s\n' "${SUBJECTS[@]}")
           relnotes=$(printf '%s\n' "${RELEASE_NOTES[@]}")
           unique_labels=$(printf '%s\n' "${LABEL_LIST[@]}" | sort -u)
+          echo "+++ Unique labels: ${unique_labels}"
           label_flags=""
           while IFS= read -r label; do
             if [[ -n "${label}" ]]; then
               label_flags+=" --label ${label}"
             fi
           done <<< "${unique_labels}"
+          echo "+++ Label flags: ${label_flags}"
           
           pr_body="[${rel}] Automated cherry pick of ${numandtitle}
           
@@ -166,11 +150,9 @@ jobs:
           ${relnotes}"
           
           pr_title="[${rel}] Automated cherry pick of ${PULLSUBJ}"
+          echo "+++ Creating cherry-pick PR with title: ${pr_title}"
           
-          echo "+++ DEBUG: Creating PR with title: ${pr_title}"
-          echo "+++ DEBUG: PR body: ${pr_body}"
-          echo "+++ DEBUG: Label flags: ${label_flags}"
           PR_URL=$(gh pr create --title "${pr_title}" --body "${pr_body}" --base "${rel}" --head "${NEWBRANCH}" ${label_flags})
           
-          echo "+++ DEBUG: PR created at ${PR_URL}"
+          echo "+++ Cherry-pick PR created: ${PR_URL}"
           gh issue comment "${PR_NUMBER}" --body "Cherry-pick PR created for ${TARGET_BRANCH}: ${PR_URL}"
