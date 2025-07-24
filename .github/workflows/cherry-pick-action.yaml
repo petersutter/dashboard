@@ -121,13 +121,18 @@ jobs:
             echo "+++ DEBUG: Cherry-pick applied successfully"
             
             pr_info=$(gh api "repos/${MAIN_REPO_ORG}/${MAIN_REPO_NAME}/pulls/${pull}")
+
+            echo "+++ DEBUG: pr_info: ${pr_info}"
             subject=$(echo "${pr_info}" | jq -r '.title')
+            echo "+++ DEBUG: subject: ${subject}"
             SUBJECTS+=("#${pull}: ${subject}")
-            
+            echo "+++ DEBUG: SUBJECTS: ${SUBJECTS}"
             temp_labels=$(echo "${pr_info}" | jq -r '.labels[].name' | grep -P '^(area|kind)')
+            echo "+++ DEBUG: temp_labels: ${temp_labels}"
             for l in ${temp_labels}; do
               LABEL_LIST+=("${l}")
             done
+            echo "+++ DEBUG: LABEL_LIST: ${LABEL_LIST}"
             
             rm -f "/tmp/${pull}.patch"
             echo "+++ DEBUG: Patch file /tmp/${pull}.patch removed"
