@@ -56,8 +56,7 @@ runs:
         echo "Extracting information from PR #${PR_NUMBER}"
 
         # Make script executable and run it
-        chmod +x "${ACTION_PATH}/extract_pr_info.py"
-        python3 "${ACTION_PATH}/extract_pr_info.py" \
+        "${ACTION_PATH}/extract_pr_info.py" \
           "${PR_NUMBER}" \
           "${REPO_OWNER}" \
           "${REPO_NAME}"
