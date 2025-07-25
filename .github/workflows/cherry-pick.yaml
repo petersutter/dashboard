@@ -28,7 +28,7 @@ jobs:
           # This handles both inline format: /cherry-pick branch1 /cherry-pick branch2
           # and multiline format with separate /cherry-pick commands
           # The 'sort -u' ensures branches are sorted and unique (duplicates removed)
-          BRANCHES=$(echo "$BODY" | grep -oE '/cherry-pick\s+[^\s/]+' | sed 's|/cherry-pick\s*||g' | sort -u)
+          BRANCHES=$(echo "$BODY" | grep -oE '/cherry-pick[[:space:]]+[^[:space:]]+' | sed 's|/cherry-pick[[:space:]]*||g' | sort -u)
 
           if [ -z "$BRANCHES" ]; then
             echo "No valid cherry-pick commands found"
@@ -67,7 +67,25 @@ jobs:
       - name: Comment on branches found
         if: steps.parse.outputs.has-branches == 'true'
         run: |
-          BRANCHES_LIST=$(echo '${{ steps.parse.outputs.branches }}' | jq -r '.[]' | sed 's/^/- `/' | sed 's/$/`/')
+          # Debug: Show the raw branches JSON
+          echo "Raw branches JSON: ${{ steps.parse.outputs.branches }}"
+
+          # Create branches list with better error handling
+          BRANCHES_JSON='${{ steps.parse.outputs.branches }}'
+          echo "Processing JSON: $BRANCHES_JSON"
+
+          if [ "$BRANCHES_JSON" = "[]" ] || [ -z "$BRANCHES_JSON" ]; then
+            echo "Error: Empty or invalid branches JSON"
+            exit 1
+          fi
+
+          # Generate the branches list
+          BRANCHES_LIST=$(echo "$BRANCHES_JSON" | jq -r '.[]' | while read -r branch; do
+            echo "- \`$branch\`"
+          done)
+
+          echo "Generated branches list:"
+          echo "$BRANCHES_LIST"
 
           cat << EOF > comment.md
           🚀 **Cherry-pick initiated for the following branches:**
@@ -76,6 +94,9 @@ jobs:
 
           _Processing cherry-picks... Results will be posted as individual comments._
           EOF
+
+          echo "Comment content:"
+          cat comment.md
 
           gh pr comment ${{ github.event.issue.number }} \
             --body-file comment.md \
