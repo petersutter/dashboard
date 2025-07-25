@@ -22,12 +22,15 @@ outputs:
   success:
     description: Whether the cherry-pick was successful
     value: ${{ steps.cherry-pick.outputs.success }}
-  pr-title:
-    description: Title of the original PR
-    value: ${{ steps.extract-info.outputs.pr-title }}
-  release-notes:
-    description: Extracted release notes from the original PR
-    value: ${{ steps.extract-info.outputs.release-notes }}
+  pr-info-file:
+    description: Path to PR information JSON file
+    value: ${{ steps.extract-info.outputs.pr-info-file }}
+  release-notes-file:
+    description: Path to release notes markdown file
+    value: ${{ steps.extract-info.outputs.release-notes-file }}
+  copyable-labels-file:
+    description: Path to copyable labels file
+    value: ${{ steps.extract-info.outputs.copyable-labels-file }}
 
 runs:
   using: composite
@@ -61,28 +64,29 @@ runs:
 
         echo "PR information extracted successfully"
 
-        # Read extracted data and set outputs
+        # Set file path outputs
         if [ -f pr-info.json ]; then
-          pr_title=$(jq -r '.title' pr-info.json)
-          pr_body=$(jq -r '.body' pr-info.json)
-          echo "pr-title=$pr_title" >> $GITHUB_OUTPUT
-          echo "pr-body=$pr_body" >> $GITHUB_OUTPUT
+          echo "pr-info-file=$(pwd)/pr-info.json" >> $GITHUB_OUTPUT
+          echo "✅ PR info file created: $(pwd)/pr-info.json"
+        else
+          echo "❌ PR info file not created"
+          exit 1
         fi
 
         if [ -f release-notes.md ]; then
-          echo 'release-notes<<EOF' >> $GITHUB_OUTPUT
-          cat release-notes.md >> $GITHUB_OUTPUT
-          echo 'EOF' >> $GITHUB_OUTPUT
+          echo "release-notes-file=$(pwd)/release-notes.md" >> $GITHUB_OUTPUT
+          echo "✅ Release notes file created: $(pwd)/release-notes.md"
         else
-          echo "release-notes=" >> $GITHUB_OUTPUT
+          echo "release-notes-file=" >> $GITHUB_OUTPUT
+          echo "⚠️ No release notes file created"
         fi
 
         if [ -f copyable-labels.txt ]; then
-          # Convert labels to comma-separated string
-          labels=$(tr '\n' ',' < copyable-labels.txt | sed 's/,$//')
-          echo "copyable-labels=$labels" >> $GITHUB_OUTPUT
+          echo "copyable-labels-file=$(pwd)/copyable-labels.txt" >> $GITHUB_OUTPUT
+          echo "✅ Copyable labels file created: $(pwd)/copyable-labels.txt"
         else
-          echo "copyable-labels=" >> $GITHUB_OUTPUT
+          echo "copyable-labels-file=" >> $GITHUB_OUTPUT
+          echo "⚠️ No copyable labels file created"
         fi
 
     - name: Download and Apply Cherry-Pick
@@ -198,9 +202,9 @@ runs:
         REPO_OWNER: ${{ github.repository_owner }}
         REPO_NAME: ${{ github.event.repository.name }}
         NEW_BRANCH: ${{ steps.cherry-pick.outputs.new-branch }}
-        PR_TITLE: ${{ steps.extract-info.outputs.pr-title }}
-        RELEASE_NOTES: ${{ steps.extract-info.outputs.release-notes }}
-        COPYABLE_LABELS: ${{ steps.extract-info.outputs.copyable-labels }}
+        PR_INFO_FILE: ${{ steps.extract-info.outputs.pr-info-file }}
+        RELEASE_NOTES_FILE: ${{ steps.extract-info.outputs.release-notes-file }}
+        COPYABLE_LABELS_FILE: ${{ steps.extract-info.outputs.copyable-labels-file }}
       run: |
         set -eu
 
@@ -210,9 +214,32 @@ runs:
         repo_name="${REPO_NAME}"
         newbranch="${NEW_BRANCH}"
 
-        pr_title="${PR_TITLE}"
-        release_notes="${RELEASE_NOTES}"
-        copyable_labels="${COPYABLE_LABELS}"
+        # Read PR information from files
+        if [ -f "${PR_INFO_FILE}" ]; then
+          pr_title=$(jq -r '.title' "${PR_INFO_FILE}")
+          echo "✅ Read PR title from file: ${pr_title}"
+        else
+          echo "❌ PR info file not found: ${PR_INFO_FILE}"
+          pr_title="Unknown PR"
+        fi
+
+        # Read release notes from file
+        if [ -n "${RELEASE_NOTES_FILE}" ] && [ -f "${RELEASE_NOTES_FILE}" ]; then
+          release_notes=$(cat "${RELEASE_NOTES_FILE}")
+          echo "✅ Read release notes from file (${#release_notes} characters)"
+        else
+          release_notes=""
+          echo "⚠️ No release notes file or file not found"
+        fi
+
+        # Read copyable labels from file
+        if [ -n "${COPYABLE_LABELS_FILE}" ] && [ -f "${COPYABLE_LABELS_FILE}" ]; then
+          copyable_labels=$(tr '\n' ',' < "${COPYABLE_LABELS_FILE}" | sed 's/,$//')
+          echo "✅ Read copyable labels from file: ${copyable_labels}"
+        else
+          copyable_labels=""
+          echo "⚠️ No copyable labels file or file not found"
+        fi
 
         # Create PR title and body
         cherry_pick_title="[${target_branch}] Automated cherry pick of #${pr_number}"
@@ -225,7 +252,11 @@ runs:
         echo "#${pr_number}: ${pr_title}" >> pr_body.md
         echo "" >> pr_body.md
         echo "**Release Notes:**" >> pr_body.md
-        echo "${release_notes:-NONE}" >> pr_body.md
+        if [ -n "${release_notes}" ]; then
+          echo "${release_notes}" >> pr_body.md
+        else
+          echo "NONE" >> pr_body.md
+        fi
 
         echo "Creating cherry-pick PR"
         pr_url=$(gh pr create \
