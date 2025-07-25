@@ -116,6 +116,21 @@ runs:
         echo "new-branch=${newbranch}" >> $GITHUB_OUTPUT
         echo "unique-branch=${newbranch_uniq}" >> $GITHUB_OUTPUT
 
+        # Check if the new branch already exists on remote
+        echo "Checking if branch ${newbranch} already exists on remote"
+        if git ls-remote --heads origin "${newbranch}" | grep -q "${newbranch}"; then
+          echo "❌ Branch ${newbranch} already exists on remote repository"
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "error=Branch ${newbranch} already exists" >> $GITHUB_OUTPUT
+
+          # Comment on original PR about the error
+          gh pr comment "${PR_NUMBER}" \
+            --body "❌ Cherry-pick to \`${target_branch}\` failed: Branch \`${newbranch}\` already exists. Please check if a cherry-pick PR for this combination already exists." \
+            --repo "${repo_owner}/${repo_name}"
+
+          exit 1
+        fi
+
         # Fetch target branch to ensure it exists
         echo "Fetching target branch: ${target_branch}"
         if ! git fetch origin "${target_branch}:${target_branch}"; then
