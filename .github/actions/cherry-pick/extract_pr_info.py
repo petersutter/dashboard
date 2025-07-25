@@ -64,7 +64,7 @@ def extract_pr_info(pr_number: int, repo_owner: str, repo_name: str, github_toke
 
         # Extract labels
         labels = []
-        for label in pr.labels():
+        for label in pr.labels:
             labels.append({
                 'name': label.name,
                 'color': label.color,
