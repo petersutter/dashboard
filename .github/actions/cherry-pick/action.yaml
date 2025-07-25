@@ -196,13 +196,14 @@ runs:
           fi
 
           # Clean up
-          git checkout main || git checkout master || true
+          git checkout master || git checkout main || true
           git branch -D "${newbranch_uniq}" || true
           rm -f "/tmp/${pr_number}.patch"
           exit 1
         fi
 
-        # Clean up patch file
+        # Clean up
+        git checkout master || git checkout main || true
         rm -f "/tmp/${pr_number}.patch"
 
     - name: Create Cherry-Pick PR
