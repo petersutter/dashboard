@@ -93,6 +93,7 @@ runs:
 
     - name: Download and Apply Cherry-Pick
       id: cherry-pick
+      continue-on-error: true
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -124,7 +125,6 @@ runs:
         if git ls-remote --heads origin "${newbranch}" | grep -q "${newbranch}"; then
           echo "❌ Branch ${newbranch} already exists on remote repository"
           echo "success=false" >> $GITHUB_OUTPUT
-          echo "error=Branch ${newbranch} already exists" >> $GITHUB_OUTPUT
 
           # Create error message file
           echo "❌ Cherry-pick to \`${target_branch}\` failed: Branch \`${newbranch}\` already exists. Please check if a cherry-pick PR for this combination already exists." > "$(pwd)/cherry-pick-error.md"
@@ -138,7 +138,6 @@ runs:
         if ! git fetch origin "${target_branch}:${target_branch}"; then
           echo "❌ Target branch ${target_branch} does not exist"
           echo "success=false" >> $GITHUB_OUTPUT
-          echo "error=Target branch ${target_branch} does not exist" >> $GITHUB_OUTPUT
 
           # Create error message file
           echo "❌ Cherry-pick to \`${target_branch}\` failed: Target branch does not exist." > "$(pwd)/cherry-pick-error.md"
@@ -159,7 +158,6 @@ runs:
              -o "/tmp/${pr_number}.patch" "${patch_url}"; then
           echo "❌ Failed to download patch"
           echo "success=false" >> $GITHUB_OUTPUT
-          echo "error=Failed to download patch" >> $GITHUB_OUTPUT
 
           # Create error message file
           echo "❌ Cherry-pick to \`${target_branch}\` failed: Failed to download patch." > "$(pwd)/cherry-pick-error.md"
@@ -185,14 +183,12 @@ runs:
           if [ -d ".git/rebase-apply" ]; then
             git am --abort || true
             echo "success=false" >> $GITHUB_OUTPUT
-            echo "error=Cherry-pick failed due to conflicts" >> $GITHUB_OUTPUT
 
             # Create error message file
             echo "❌ Cherry-pick to \`${target_branch}\` failed due to conflicts. Please cherry-pick manually." > "$(pwd)/cherry-pick-error.md"
             echo "error-message-file=$(pwd)/cherry-pick-error.md" >> $GITHUB_OUTPUT
           else
             echo "success=false" >> $GITHUB_OUTPUT
-            echo "error=Cherry-pick failed unexpectedly" >> $GITHUB_OUTPUT
 
             # Create error message file
             echo "❌ Cherry-pick to \`${target_branch}\` failed unexpectedly." > "$(pwd)/cherry-pick-error.md"
@@ -302,7 +298,7 @@ runs:
         rm -f pr_body.md
 
     - name: Comment on Original PR on Failure
-      if: steps.cherry-pick.outputs.success == 'false' && steps.cherry-pick.outputs.error-message-file != ''
+      if: always() && steps.cherry-pick.outputs.success == 'false' && steps.cherry-pick.outputs.error-message-file != ''
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
@@ -326,3 +322,10 @@ runs:
             --body "❌ Cherry-pick failed with an unknown error." \
             --repo "${REPO_OWNER}/${REPO_NAME}"
         fi
+
+    - name: Fail Action on Cherry-Pick Failure
+      if: always() && steps.cherry-pick.outputs.success == 'false'
+      shell: bash
+      run: |
+        echo "❌ Cherry-pick failed - failing the action"
+        exit 1
