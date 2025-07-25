@@ -92,7 +92,7 @@ jobs:
 
           $BRANCHES_LIST
 
-          _Processing cherry-picks..._
+          _Processing cherry-picks..._ [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           EOF
 
           echo "Comment content:"

@@ -312,6 +312,10 @@ runs:
         echo "Adding error comment to original PR"
 
         if [ -f "${ERROR_MESSAGE_FILE}" ]; then
+          # Add workflow run link to error message
+          echo "" >> "${ERROR_MESSAGE_FILE}"
+          echo "[View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" >> "${ERROR_MESSAGE_FILE}"
+
           gh pr comment "${PR_NUMBER}" \
             --body-file "${ERROR_MESSAGE_FILE}" \
             --repo "${REPO_OWNER}/${REPO_NAME}"
@@ -319,7 +323,7 @@ runs:
         else
           echo "❌ Error message file not found: ${ERROR_MESSAGE_FILE}"
           gh pr comment "${PR_NUMBER}" \
-            --body "❌ Cherry-pick failed with an unknown error." \
+            --body "❌ Cherry-pick failed with an unknown error. [View workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})" \
             --repo "${REPO_OWNER}/${REPO_NAME}"
         fi
 
