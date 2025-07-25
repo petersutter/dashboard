@@ -21,8 +21,10 @@ jobs:
     steps:
       - name: Parse branches
         id: parse
+        env:
+          COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
-          BODY="${{ github.event.comment.body }}"
+          BODY="$COMMENT_BODY"
 
           # Extract all branches from /cherry-pick commands
           # This handles both inline format: /cherry-pick branch1 /cherry-pick branch2
@@ -37,10 +39,32 @@ jobs:
             exit 0
           fi
 
+          # Validate branch names
+          # Branch names should only contain alphanumeric characters, dots, hyphens, underscores, and forward slashes
+          VALID_BRANCHES=""
+          for branch in $BRANCHES; do
+            if [[ "$branch" =~ ^[a-zA-Z0-9._/-]+$ ]]; then
+              if [ -z "$VALID_BRANCHES" ]; then
+                VALID_BRANCHES="$branch"
+              else
+                VALID_BRANCHES="$VALID_BRANCHES $branch"
+              fi
+            else
+              echo "Warning: Skipping invalid branch name: $branch"
+            fi
+          done
+
+          if [ -z "$VALID_BRANCHES" ]; then
+            echo "No valid branch names found after validation"
+            echo "has-branches=false" >> $GITHUB_OUTPUT
+            echo "branches=[]" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           # Convert to JSON array format for matrix
           JSON_ARRAY="["
           FIRST=true
-          for branch in $BRANCHES; do
+          for branch in $VALID_BRANCHES; do
             if [ "$FIRST" = true ]; then
               FIRST=false
             else
@@ -50,7 +74,7 @@ jobs:
           done
           JSON_ARRAY="$JSON_ARRAY]"
 
-          echo "Found branches: $BRANCHES"
+          echo "Found valid branches: $VALID_BRANCHES"
           echo "JSON array: $JSON_ARRAY"
           echo "has-branches=true" >> $GITHUB_OUTPUT
           echo "branches=$JSON_ARRAY" >> $GITHUB_OUTPUT
@@ -113,7 +137,7 @@ jobs:
         target-branch: ${{ fromJson(needs.parse-branches.outputs.branches) }}
       fail-fast: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: master
 
