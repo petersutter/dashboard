@@ -155,7 +155,7 @@ runs:
         echo "Downloading patch from: ${patch_url}"
 
         if ! curl -fsSL -H "Authorization: token ${GITHUB_TOKEN}" \
-             -o "/tmp/${pr_number}.patch" "${patch_url}"; then
+             -o "${RUNNER_TEMP}/${pr_number}.patch" "${patch_url}"; then
           echo "❌ Failed to download patch"
           echo "success=false" >> $GITHUB_OUTPUT
 
@@ -168,7 +168,7 @@ runs:
 
         # Apply patch using git am
         echo "Applying patch for PR #${pr_number}"
-        if git am -3 "/tmp/${pr_number}.patch"; then
+        if git am -3 "${RUNNER_TEMP}/${pr_number}.patch"; then
           echo "✅ Cherry-pick applied successfully"
           echo "success=true" >> $GITHUB_OUTPUT
 
@@ -198,13 +198,13 @@ runs:
           # Clean up
           git checkout master || git checkout main || true
           git branch -D "${newbranch_uniq}" || true
-          rm -f "/tmp/${pr_number}.patch"
+          rm -f "${RUNNER_TEMP}/${pr_number}.patch"
           exit 1
         fi
 
         # Clean up
         git checkout master || git checkout main || true
-        rm -f "/tmp/${pr_number}.patch"
+        rm -f "${RUNNER_TEMP}/${pr_number}.patch"
 
     - name: Create Cherry-Pick PR
       id: create-pr
