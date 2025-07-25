@@ -92,7 +92,7 @@ jobs:
 
           $BRANCHES_LIST
 
-          _Processing cherry-picks... Results will be posted as individual comments._
+          _Processing cherry-picks..._
           EOF
 
           echo "Comment content:"
