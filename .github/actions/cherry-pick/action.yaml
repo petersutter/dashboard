@@ -1,0 +1,274 @@
+name: Cherry Pick
+description: |
+  Performs an automated cherry-pick of a PR to a target branch, creating a new PR with the cherry-picked changes.
+  Extracts release notes and applies appropriate labels to the new PR.
+
+inputs:
+  pr-number:
+    description: The PR number to cherry-pick
+    required: true
+  target-branch:
+    description: The target branch for the cherry-pick
+    required: true
+  github-token:
+    description: GitHub token for API access
+    required: true
+    default: ${{ github.token }}
+
+outputs:
+  cherry-pick-pr-url:
+    description: URL of the created cherry-pick PR
+    value: ${{ steps.create-pr.outputs.pr-url }}
+  success:
+    description: Whether the cherry-pick was successful
+    value: ${{ steps.cherry-pick.outputs.success }}
+  pr-title:
+    description: Title of the original PR
+    value: ${{ steps.extract-info.outputs.pr-title }}
+  release-notes:
+    description: Extracted release notes from the original PR
+    value: ${{ steps.extract-info.outputs.release-notes }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Gardener GHA Libs
+      uses: gardener/cc-utils/.github/actions/install-gardener-gha-libs@master
+
+    - name: Setup Git Identity
+      uses: gardener/cc-utils/.github/actions/setup-git-identity@master
+
+    - name: Extract PR Information
+      id: extract-info
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -eu
+
+        echo "Extracting information from PR #${PR_NUMBER}"
+
+        # Make script executable and run it
+        chmod +x "${ACTION_PATH}/extract_pr_info.py"
+        python3 "${ACTION_PATH}/extract_pr_info.py" \
+          "${PR_NUMBER}" \
+          "${REPO_OWNER}" \
+          "${REPO_NAME}"
+
+        echo "PR information extracted successfully"
+
+        # Read extracted data and set outputs
+        if [ -f pr-info.json ]; then
+          pr_title=$(jq -r '.title' pr-info.json)
+          pr_body=$(jq -r '.body' pr-info.json)
+          echo "pr-title=$pr_title" >> $GITHUB_OUTPUT
+          echo "pr-body=$pr_body" >> $GITHUB_OUTPUT
+        fi
+
+        if [ -f release-notes.md ]; then
+          echo 'release-notes<<EOF' >> $GITHUB_OUTPUT
+          cat release-notes.md >> $GITHUB_OUTPUT
+          echo 'EOF' >> $GITHUB_OUTPUT
+        else
+          echo "release-notes=" >> $GITHUB_OUTPUT
+        fi
+
+        if [ -f copyable-labels.txt ]; then
+          # Convert labels to comma-separated string
+          labels=$(tr '\n' ',' < copyable-labels.txt | sed 's/,$//')
+          echo "copyable-labels=$labels" >> $GITHUB_OUTPUT
+        else
+          echo "copyable-labels=" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Download and Apply Cherry-Pick
+      id: cherry-pick
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TARGET_BRANCH: ${{ inputs.target-branch }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+      run: |
+        set -eu
+
+        pr_number="${PR_NUMBER}"
+        target_branch="${TARGET_BRANCH}"
+        repo_owner="${REPO_OWNER}"
+        repo_name="${REPO_NAME}"
+
+        echo "Starting cherry-pick for PR #${pr_number} to branch ${target_branch}"
+
+        # Generate unique branch name
+        timestamp=$(date +%s)
+        newbranch_base="automated-cherry-pick-of-#${pr_number}"
+        newbranch="${newbranch_base}-${target_branch}"
+        newbranch_uniq="${newbranch}-${timestamp}"
+
+        echo "new-branch=${newbranch}" >> $GITHUB_OUTPUT
+        echo "unique-branch=${newbranch_uniq}" >> $GITHUB_OUTPUT
+
+        # Fetch target branch to ensure it exists
+        echo "Fetching target branch: ${target_branch}"
+        if ! git fetch origin "${target_branch}:${target_branch}"; then
+          echo "❌ Target branch ${target_branch} does not exist"
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "error=Target branch ${target_branch} does not exist" >> $GITHUB_OUTPUT
+
+          # Comment on original PR about the error
+          gh pr comment "${PR_NUMBER}" \
+            --body "❌ Cherry-pick to \`${target_branch}\` failed: Target branch does not exist." \
+            --repo "${repo_owner}/${repo_name}"
+
+          exit 1
+        fi
+
+        # Create and checkout new branch from target
+        echo "Creating branch ${newbranch_uniq} from ${target_branch}"
+        git checkout -b "${newbranch_uniq}" "origin/${target_branch}"
+
+        # Download patch
+        patch_url="https://github.com/${repo_owner}/${repo_name}/pull/${pr_number}.patch"
+        echo "Downloading patch from: ${patch_url}"
+
+        if ! curl -fsSL -H "Authorization: token ${GITHUB_TOKEN}" \
+             -o "/tmp/${pr_number}.patch" "${patch_url}"; then
+          echo "❌ Failed to download patch"
+          echo "success=false" >> $GITHUB_OUTPUT
+          echo "error=Failed to download patch" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+
+        # Apply patch using git am
+        echo "Applying patch for PR #${pr_number}"
+        if git am -3 "/tmp/${pr_number}.patch"; then
+          echo "✅ Cherry-pick applied successfully"
+          echo "success=true" >> $GITHUB_OUTPUT
+
+          # Push the new branch
+          echo "Pushing branch ${newbranch_uniq} as ${newbranch}"
+          git push origin "${newbranch_uniq}:${newbranch}"
+
+        else
+          echo "❌ Cherry-pick failed due to conflicts"
+
+          # Check if it's a conflict situation
+          if [ -d ".git/rebase-apply" ]; then
+            git am --abort || true
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "error=Cherry-pick failed due to conflicts" >> $GITHUB_OUTPUT
+
+            # Comment on original PR about conflicts
+            gh pr comment "${PR_NUMBER}" \
+              --body "❌ Cherry-pick to \`${target_branch}\` failed due to conflicts. Please cherry-pick manually." \
+              --repo "${repo_owner}/${repo_name}"
+          else
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "error=Cherry-pick failed unexpectedly" >> $GITHUB_OUTPUT
+
+            # Comment on original PR about unexpected failure
+            gh pr comment "${PR_NUMBER}" \
+              --body "❌ Cherry-pick to \`${target_branch}\` failed unexpectedly." \
+              --repo "${repo_owner}/${repo_name}"
+          fi
+
+          # Clean up
+          git checkout main || git checkout master || true
+          git branch -D "${newbranch_uniq}" || true
+          rm -f "/tmp/${pr_number}.patch"
+          exit 1
+        fi
+
+        # Clean up patch file
+        rm -f "/tmp/${pr_number}.patch"
+
+    - name: Create Cherry-Pick PR
+      id: create-pr
+      if: steps.cherry-pick.outputs.success == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TARGET_BRANCH: ${{ inputs.target-branch }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+        NEW_BRANCH: ${{ steps.cherry-pick.outputs.new-branch }}
+        PR_TITLE: ${{ steps.extract-info.outputs.pr-title }}
+        RELEASE_NOTES: ${{ steps.extract-info.outputs.release-notes }}
+        COPYABLE_LABELS: ${{ steps.extract-info.outputs.copyable-labels }}
+      run: |
+        set -eu
+
+        pr_number="${PR_NUMBER}"
+        target_branch="${TARGET_BRANCH}"
+        repo_owner="${REPO_OWNER}"
+        repo_name="${REPO_NAME}"
+        newbranch="${NEW_BRANCH}"
+
+        pr_title="${PR_TITLE}"
+        release_notes="${RELEASE_NOTES}"
+        copyable_labels="${COPYABLE_LABELS}"
+
+        # Create PR title and body
+        cherry_pick_title="[${target_branch}] Automated cherry pick of #${pr_number}"
+
+        # Create PR body content
+        echo "[${target_branch}] Automated cherry pick of #${pr_number}: ${pr_title}" > pr_body.md
+        echo "" >> pr_body.md
+        echo "Cherry pick of #${pr_number} on ${target_branch}." >> pr_body.md
+        echo "" >> pr_body.md
+        echo "#${pr_number}: ${pr_title}" >> pr_body.md
+        echo "" >> pr_body.md
+        echo "**Release Notes:**" >> pr_body.md
+        echo "${release_notes:-NONE}" >> pr_body.md
+
+        echo "Creating cherry-pick PR"
+        pr_url=$(gh pr create \
+          --title "${cherry_pick_title}" \
+          --body-file pr_body.md \
+          --head "${newbranch}" \
+          --base "${target_branch}" \
+          --repo "${repo_owner}/${repo_name}")
+
+        echo "pr-url=${pr_url}" >> $GITHUB_OUTPUT
+        echo "✅ Cherry-pick PR created: ${pr_url}"
+
+        # Add labels if any
+        if [ -n "${copyable_labels}" ]; then
+          echo "Adding labels: ${copyable_labels}"
+          # Add labels one by one to avoid shell expansion issues
+          echo "${copyable_labels}" | tr ',' '\n' | while read -r label; do
+            if [ -n "$label" ]; then
+              gh pr edit "${pr_url}" --add-label "$label" || echo "⚠️ Failed to add label: $label"
+            fi
+          done
+        fi
+
+        # Clean up
+        rm -f pr_body.md
+
+    - name: Comment on Original PR
+      if: steps.cherry-pick.outputs.success == 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TARGET_BRANCH: ${{ inputs.target-branch }}
+        PR_URL: ${{ steps.create-pr.outputs.pr-url }}
+        REPO_OWNER: ${{ github.repository_owner }}
+        REPO_NAME: ${{ github.event.repository.name }}
+      run: |
+        set -eu
+
+        pr_url="${PR_URL}"
+        target_branch="${TARGET_BRANCH}"
+
+        echo "Adding success comment to original PR"
+        gh pr comment "${PR_NUMBER}" \
+          --body "✅ Cherry-pick PR created for \`${target_branch}\`: ${pr_url}" \
+          --repo "${REPO_OWNER}/${REPO_NAME}"

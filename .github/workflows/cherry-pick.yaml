@@ -1,0 +1,36 @@
+name: Cherry Pick Action (Improved)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  cherry-pick:
+    runs-on: ubuntu-latest
+    if: |
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/cherry-pick ') &&
+      (github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Parse branch
+        id: parse
+        run: |
+          BODY="${{ github.event.comment.body }}"
+          BRANCH=$(echo "$BODY" | awk '/^\/cherry-pick /{print $2}')
+          echo "target_branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Perform Cherry Pick
+        uses: ./.github/actions/cherry-pick
+        with:
+          pr-number: ${{ github.event.issue.number }}
+          target-branch: ${{ steps.parse.outputs.target_branch }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
