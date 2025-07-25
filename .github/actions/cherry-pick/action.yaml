@@ -31,6 +31,9 @@ outputs:
   copyable-labels-file:
     description: Path to copyable labels file
     value: ${{ steps.extract-info.outputs.copyable-labels-file }}
+  error-message-file:
+    description: Path to error message file (only set on failure)
+    value: ${{ steps.cherry-pick.outputs.error-message-file }}
 
 runs:
   using: composite
@@ -123,10 +126,9 @@ runs:
           echo "success=false" >> $GITHUB_OUTPUT
           echo "error=Branch ${newbranch} already exists" >> $GITHUB_OUTPUT
 
-          # Comment on original PR about the error
-          gh pr comment "${PR_NUMBER}" \
-            --body "❌ Cherry-pick to \`${target_branch}\` failed: Branch \`${newbranch}\` already exists. Please check if a cherry-pick PR for this combination already exists." \
-            --repo "${repo_owner}/${repo_name}"
+          # Create error message file
+          echo "❌ Cherry-pick to \`${target_branch}\` failed: Branch \`${newbranch}\` already exists. Please check if a cherry-pick PR for this combination already exists." > "$(pwd)/cherry-pick-error.md"
+          echo "error-message-file=$(pwd)/cherry-pick-error.md" >> $GITHUB_OUTPUT
 
           exit 1
         fi
@@ -138,10 +140,9 @@ runs:
           echo "success=false" >> $GITHUB_OUTPUT
           echo "error=Target branch ${target_branch} does not exist" >> $GITHUB_OUTPUT
 
-          # Comment on original PR about the error
-          gh pr comment "${PR_NUMBER}" \
-            --body "❌ Cherry-pick to \`${target_branch}\` failed: Target branch does not exist." \
-            --repo "${repo_owner}/${repo_name}"
+          # Create error message file
+          echo "❌ Cherry-pick to \`${target_branch}\` failed: Target branch does not exist." > "$(pwd)/cherry-pick-error.md"
+          echo "error-message-file=$(pwd)/cherry-pick-error.md" >> $GITHUB_OUTPUT
 
           exit 1
         fi
@@ -159,6 +160,11 @@ runs:
           echo "❌ Failed to download patch"
           echo "success=false" >> $GITHUB_OUTPUT
           echo "error=Failed to download patch" >> $GITHUB_OUTPUT
+
+          # Create error message file
+          echo "❌ Cherry-pick to \`${target_branch}\` failed: Failed to download patch." > "$(pwd)/cherry-pick-error.md"
+          echo "error-message-file=$(pwd)/cherry-pick-error.md" >> $GITHUB_OUTPUT
+
           exit 1
         fi
 
@@ -181,18 +187,16 @@ runs:
             echo "success=false" >> $GITHUB_OUTPUT
             echo "error=Cherry-pick failed due to conflicts" >> $GITHUB_OUTPUT
 
-            # Comment on original PR about conflicts
-            gh pr comment "${PR_NUMBER}" \
-              --body "❌ Cherry-pick to \`${target_branch}\` failed due to conflicts. Please cherry-pick manually." \
-              --repo "${repo_owner}/${repo_name}"
+            # Create error message file
+            echo "❌ Cherry-pick to \`${target_branch}\` failed due to conflicts. Please cherry-pick manually." > "$(pwd)/cherry-pick-error.md"
+            echo "error-message-file=$(pwd)/cherry-pick-error.md" >> $GITHUB_OUTPUT
           else
             echo "success=false" >> $GITHUB_OUTPUT
             echo "error=Cherry-pick failed unexpectedly" >> $GITHUB_OUTPUT
 
-            # Comment on original PR about unexpected failure
-            gh pr comment "${PR_NUMBER}" \
-              --body "❌ Cherry-pick to \`${target_branch}\` failed unexpectedly." \
-              --repo "${repo_owner}/${repo_name}"
+            # Create error message file
+            echo "❌ Cherry-pick to \`${target_branch}\` failed unexpectedly." > "$(pwd)/cherry-pick-error.md"
+            echo "error-message-file=$(pwd)/cherry-pick-error.md" >> $GITHUB_OUTPUT
           fi
 
           # Clean up
@@ -297,23 +301,28 @@ runs:
         # Clean up
         rm -f pr_body.md
 
-    - name: Comment on Original PR
-      if: steps.cherry-pick.outputs.success == 'true'
+    - name: Comment on Original PR on Failure
+      if: steps.cherry-pick.outputs.success == 'false' && steps.cherry-pick.outputs.error-message-file != ''
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         PR_NUMBER: ${{ inputs.pr-number }}
-        TARGET_BRANCH: ${{ inputs.target-branch }}
-        PR_URL: ${{ steps.create-pr.outputs.pr-url }}
         REPO_OWNER: ${{ github.repository_owner }}
         REPO_NAME: ${{ github.event.repository.name }}
+        ERROR_MESSAGE_FILE: ${{ steps.cherry-pick.outputs.error-message-file }}
       run: |
         set -eu
 
-        pr_url="${PR_URL}"
-        target_branch="${TARGET_BRANCH}"
+        echo "Adding error comment to original PR"
 
-        echo "Adding success comment to original PR"
-        gh pr comment "${PR_NUMBER}" \
-          --body "✅ Cherry-pick PR created for \`${target_branch}\`: ${pr_url}" \
-          --repo "${REPO_OWNER}/${REPO_NAME}"
+        if [ -f "${ERROR_MESSAGE_FILE}" ]; then
+          gh pr comment "${PR_NUMBER}" \
+            --body-file "${ERROR_MESSAGE_FILE}" \
+            --repo "${REPO_OWNER}/${REPO_NAME}"
+          echo "✅ Error comment added to PR #${PR_NUMBER}"
+        else
+          echo "❌ Error message file not found: ${ERROR_MESSAGE_FILE}"
+          gh pr comment "${PR_NUMBER}" \
+            --body "❌ Cherry-pick failed with an unknown error." \
+            --repo "${REPO_OWNER}/${REPO_NAME}"
+        fi
