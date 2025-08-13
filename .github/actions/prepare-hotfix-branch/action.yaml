@@ -22,6 +22,7 @@ runs:
 
     # Copy the callback action OUTSIDE the repository before switching refs
     - name: Stage callback action outside repo (if provided)
+      id: stage-callback
       if: ${{ inputs.callback-action-path }} != ''
       shell: bash
       env:
@@ -32,6 +33,7 @@ runs:
         # static path, as github-actions do not allow using parameters for this
         cp -r "$CALLBACK_ACTION_PATH" ../prepare-hotfix-callback-action
         echo "Callback action staged at ../prepare-hotfix-callback-action"
+        echo "callback-path=../prepare-hotfix-callback-action" >> $GITHUB_OUTPUT
 
     - name: Compute and validate branch names
       shell: bash
@@ -89,11 +91,7 @@ runs:
         prerelease: dev
         repository-operation: commit-to-head
         commit-message: Bump patch version to ${version} for hotfix
-
-    # Run the staged callback action from the static path OUTSIDE the repo
-    - name: Repository specific preparation
-      if: ${{ inputs.callback-action-path }} != ''
-      uses: ./../prepare-hotfix-callback-action
+        callback-action-path: ${{ steps.stage-callback.outputs.callback-path }}
 
     - name: Push prepare branch and create Pull Request
       shell: bash
