@@ -1,12 +1,26 @@
 name: Prepare Hotfix Branch
 
 on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      callback-action-path:
+        required: false
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       tag:
         description: 'The tag for which the hotfix should be created'
         required: true
         type: string
+      callback-action-path:
+        description: 'Callback action path'
+        required: false
+        type: string
+        default: .github/actions/prepare-hotfix
 
 permissions:
   contents: none  # we rely on the GitHub App token instead
@@ -37,4 +51,4 @@ jobs:
         with:
           tag: ${{ env.TAG }}
           github-token: ${{ steps.app-token.outputs.token }}
-          callback-action-path: .github/actions/prepare-hotfix
+          callback-action-path: ${{ inputs.callback-action-path }}
