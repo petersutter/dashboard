@@ -1,0 +1,85 @@
+name: Prepare Hotfix Branch
+
+description: Creates hotfix and preparation branches from a tag and optionally runs a repository specific callback.
+
+inputs:
+  tag:
+    description: The tag for which the hotfix should be created
+    required: true
+  github-token:
+    description: Token used for pushing changes and creating pull request
+    required: true
+  callback-action-path:
+    description: Optional path to a callback action executed after bumping the version
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Git Identity
+      uses: gardener/cc-utils/.github/actions/setup-git-identity@master
+
+    - name: Compute and validate branch names
+      shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
+      run: |
+        set -eu
+        if [[ ! "$TAG" =~ \.0$ ]]; then
+          echo "Tag does not end with .0"
+          exit 1
+        fi
+        BASE_VERSION="${TAG%.*}"
+        HOTFIX_BRANCH="hotfix-${BASE_VERSION}"
+        if [[ ! "$HOTFIX_BRANCH" =~ ^hotfix-[a-zA-Z0-9.-]+$ ]]; then
+          echo "Invalid hotfix branch name derived from tag: $HOTFIX_BRANCH"
+          exit 1
+        fi
+        PREPARE_BRANCH="hotfix-prepare-${BASE_VERSION}"
+        echo "HOTFIX_BRANCH=$HOTFIX_BRANCH" >> $GITHUB_ENV
+        echo "PREPARE_BRANCH=$PREPARE_BRANCH" >> $GITHUB_ENV
+
+    - name: Check and create branches
+      shell: bash
+      run: |
+        set -eu
+        git fetch origin
+        if git ls-remote --exit-code origin "$HOTFIX_BRANCH" > /dev/null 2>&1; then
+          echo "Hotfix branch $HOTFIX_BRANCH already exists"
+          exit 1
+        fi
+        if git ls-remote --exit-code origin "$PREPARE_BRANCH" > /dev/null 2>&1; then
+          echo "Prepare branch $PREPARE_BRANCH already exists"
+          exit 1
+        fi
+        git checkout -b "$HOTFIX_BRANCH"
+        git push origin "$HOTFIX_BRANCH"
+        git checkout -b "$PREPARE_BRANCH" # do not push yet
+
+    - name: Bump patch version
+      uses: gardener/cc-utils/.github/actions/version@master
+      with:
+        version-operation: bump-patch
+        prerelease: dev
+        repository-operation: commit-to-head
+        commit-message: Bump patch version to ${version} for hotfix
+
+    - name: Repository specific preparation
+      if: inputs.callback-action-path != ''
+      uses: ${{ inputs.callback-action-path }}
+      env:
+        HUSKY: 0
+
+    - name: Push prepare branch and create Pull Request
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -eu
+        git push origin "$PREPARE_BRANCH"
+        gh pr create \
+          --base "$HOTFIX_BRANCH" \
+          --head "$PREPARE_BRANCH" \
+          --title "[$HOTFIX_BRANCH] Prepare hotfix branch" \
+          --body "Bumps the patch version for release preparation."
