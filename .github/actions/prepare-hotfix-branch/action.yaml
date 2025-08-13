@@ -20,6 +20,17 @@ runs:
     - name: Setup Git Identity
       uses: gardener/cc-utils/.github/actions/setup-git-identity@master
 
+    # Copy the callback action OUTSIDE the repository before switching refs
+    - name: Stage callback action outside repo (if provided)
+      if: env.CALLBACK_ACTION_PATH != ''
+      shell: bash
+      env:
+        CALLBACK_ACTION_PATH: ${{ inputs.callback-action-path }}
+      run: |
+        set -eu
+        # cp outside of repository-tree so we do not have to cleanup afterwards; also, we need a
+        # static path, as github-actions do not allow using parameters for this
+        cp -r "$CALLBACK_ACTION_PATH" ../prepare-hotfix-callback-action
     - name: Compute and validate branch names
       shell: bash
       env:
@@ -37,25 +48,35 @@ runs:
           exit 1
         fi
         PREPARE_BRANCH="hotfix-prepare-${BASE_VERSION}"
-        echo "HOTFIX_BRANCH=$HOTFIX_BRANCH" >> $GITHUB_ENV
-        echo "PREPARE_BRANCH=$PREPARE_BRANCH" >> $GITHUB_ENV
+        echo "HOTFIX_BRANCH=$HOTFIX_BRANCH" >> "$GITHUB_ENV"
+        echo "PREPARE_BRANCH=$PREPARE_BRANCH" >> "$GITHUB_ENV"
 
-    - name: Check and create branches
+    - name: Check and create branches (base on tag)
       shell: bash
+      env:
+        TAG: ${{ inputs.tag }}
       run: |
-        set -eu
-        git fetch origin
-        if git ls-remote --exit-code origin "$HOTFIX_BRANCH" > /dev/null 2>&1; then
+        set -euo pipefail
+        git fetch --tags origin
+
+        if ! git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+          echo "Tag not found: $TAG"
+          exit 1
+        fi
+
+        if git ls-remote --exit-code origin "$HOTFIX_BRANCH" >/dev/null 2>&1; then
           echo "Hotfix branch $HOTFIX_BRANCH already exists"
           exit 1
         fi
-        if git ls-remote --exit-code origin "$PREPARE_BRANCH" > /dev/null 2>&1; then
+        if git ls-remote --exit-code origin "$PREPARE_BRANCH" >/dev/null 2>&1; then
           echo "Prepare branch $PREPARE_BRANCH already exists"
           exit 1
         fi
-        git checkout -b "$HOTFIX_BRANCH"
+
+        # Create the hotfix branch from the tag, push it, then create the prepare branch from hotfix
+        git checkout -b "$HOTFIX_BRANCH" "$TAG"
         git push origin "$HOTFIX_BRANCH"
-        git checkout -b "$PREPARE_BRANCH" # do not push yet
+        git checkout -b "$PREPARE_BRANCH" "$HOTFIX_BRANCH"
 
     - name: Bump patch version
       uses: gardener/cc-utils/.github/actions/version@master
@@ -65,18 +86,17 @@ runs:
         repository-operation: commit-to-head
         commit-message: Bump patch version to ${version} for hotfix
 
+    # Run the staged callback action from the static path OUTSIDE the repo
     - name: Repository specific preparation
-      if: inputs.callback-action-path != ''
-      uses: ${{ inputs.callback-action-path }}
-      env:
-        HUSKY: 0
+      if: env.CALLBACK_ACTION_PATH != ''
+      uses: ../prepare-hotfix-callback-action
 
     - name: Push prepare branch and create Pull Request
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
       run: |
-        set -eu
+        set -euo pipefail
         git push origin "$PREPARE_BRANCH"
         gh pr create \
           --base "$HOTFIX_BRANCH" \
