@@ -22,7 +22,7 @@ runs:
 
     # Copy the callback action OUTSIDE the repository before switching refs
     - name: Stage callback action outside repo (if provided)
-      if: env.CALLBACK_ACTION_PATH != ''
+      if: ${{ inputs.callback-action-path }} != ''
       shell: bash
       env:
         CALLBACK_ACTION_PATH: ${{ inputs.callback-action-path }}
@@ -92,7 +92,7 @@ runs:
 
     # Run the staged callback action from the static path OUTSIDE the repo
     - name: Repository specific preparation
-      if: env.CALLBACK_ACTION_PATH != ''
+      if: ${{ inputs.callback-action-path }} != ''
       uses: ./../prepare-hotfix-callback-action
 
     - name: Push prepare branch and create Pull Request
