@@ -33,7 +33,7 @@ jobs:
           fetch-depth: 1
 
       - name: Prepare hotfix branch
-        uses: ${{ github.repository }}/.github/actions/prepare-hotfix-branch@master
+        uses: petersutter/dashboard/.github/actions/prepare-hotfix-branch@master
         with:
           tag: ${{ env.TAG }}
           github-token: ${{ steps.app-token.outputs.token }}
