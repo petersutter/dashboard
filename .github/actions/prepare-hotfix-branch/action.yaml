@@ -89,7 +89,7 @@ runs:
     # Run the staged callback action from the static path OUTSIDE the repo
     - name: Repository specific preparation
       if: env.CALLBACK_ACTION_PATH != ''
-      uses: ../prepare-hotfix-callback-action
+      uses: ./../prepare-hotfix-callback-action
 
     - name: Push prepare branch and create Pull Request
       shell: bash
