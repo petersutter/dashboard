@@ -31,6 +31,8 @@ runs:
         # cp outside of repository-tree so we do not have to cleanup afterwards; also, we need a
         # static path, as github-actions do not allow using parameters for this
         cp -r "$CALLBACK_ACTION_PATH" ../prepare-hotfix-callback-action
+        echo "Callback action staged at ../prepare-hotfix-callback-action"
+
     - name: Compute and validate branch names
       shell: bash
       env:
@@ -50,6 +52,7 @@ runs:
         PREPARE_BRANCH="hotfix-prepare-${BASE_VERSION}"
         echo "HOTFIX_BRANCH=$HOTFIX_BRANCH" >> "$GITHUB_ENV"
         echo "PREPARE_BRANCH=$PREPARE_BRANCH" >> "$GITHUB_ENV"
+        echo "Computed branches: $HOTFIX_BRANCH and $PREPARE_BRANCH"
 
     - name: Check and create branches (base on tag)
       shell: bash
@@ -77,6 +80,7 @@ runs:
         git checkout -b "$HOTFIX_BRANCH" "$TAG"
         git push origin "$HOTFIX_BRANCH"
         git checkout -b "$PREPARE_BRANCH" "$HOTFIX_BRANCH"
+        echo "Created branches: $HOTFIX_BRANCH and $PREPARE_BRANCH"
 
     - name: Bump patch version
       uses: gardener/cc-utils/.github/actions/version@master
