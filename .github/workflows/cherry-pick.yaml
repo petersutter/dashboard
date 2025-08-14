@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Parse branches
         id: parse
-        uses: gardener/dashboard/.github/actions/parse-cherry-pick-branches@master
+        uses: petersutter/dashboard/.github/actions/parse-cherry-pick-branches@master
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
