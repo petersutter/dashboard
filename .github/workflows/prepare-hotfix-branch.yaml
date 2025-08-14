@@ -10,6 +10,10 @@ on:
         required: false
         type: string
         default: ''
+    secrets:
+      GARDENER_GITHUB_ACTIONS_PRIVATE_KEY:
+        description: "Private key for the Gardener GitHub Actions app"
+        required: true
   workflow_dispatch:
     inputs:
       tag:
