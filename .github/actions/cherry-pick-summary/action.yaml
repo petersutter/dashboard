@@ -1,0 +1,33 @@
+name: 'Cherry-Pick Summary'
+description: 'Posts a summary comment after cherry-pick operations'
+inputs:
+  github_token:
+    description: 'GitHub token with repo permissions'
+    required: true
+  pr_number:
+    description: 'The PR number to comment on'
+    required: true
+  cherry_pick_result:
+    description: 'The result of the cherry-pick job (success, failure, etc.)'
+    required: true
+runs:
+  using: 'composite'
+  steps:
+    - name: Post completion summary
+      shell: bash
+      run: |
+        CHERRY_PICK_RESULT="${{ inputs.cherry_pick_result }}"
+
+        if [ "$CHERRY_PICK_RESULT" = "success" ]; then
+          SUMMARY="✅ **All cherry-pick operations completed successfully!**"
+        elif [ "$CHERRY_PICK_RESULT" = "failure" ]; then
+          SUMMARY="⚠️ **Some cherry-pick operations failed.** Check individual status comments above for details."
+        else
+          SUMMARY="ℹ️ **Cherry-pick operations completed with mixed results.** Check individual status comments above for details."
+        fi
+
+        gh pr comment ${{ inputs.pr_number }} \
+          --body "$SUMMARY" \
+          --repo ${{ github.repository }}
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
